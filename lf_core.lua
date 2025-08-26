@@ -4,81 +4,7 @@
 local LuaFlex = {}
 
 -- Object pool for reducing GC pressure during layout calculations
-local ObjectPool = {
-    arrays = {},
-    tables = {},
-    maxPoolSize = 100  -- Prevent unbounded growth
-}
-
--- Get a recycled array or create a new one
-local function getArray()
-    if #ObjectPool.arrays > 0 then
-        local array = table.remove(ObjectPool.arrays)
-        -- Clear the array (but keep the table allocated)
-        for i = #array, 1, -1 do
-            array[i] = nil
-        end
-        return array
-    else
-        return {}
-    end
-end
-
--- Return an array to the pool for reuse
-local function recycleArray(array)
-    if #ObjectPool.arrays < ObjectPool.maxPoolSize then
-        table.insert(ObjectPool.arrays, array)
-    end
-end
-
--- Get a recycled table or create a new one
-local function getTable()
-    if #ObjectPool.tables > 0 then
-        local tbl = table.remove(ObjectPool.tables)
-        -- Clear the table (but keep it allocated)
-        for k in pairs(tbl) do
-            tbl[k] = nil
-        end
-        return tbl
-    else
-        return {}
-    end
-end
-
--- Return a table to the pool for reuse
-local function recycleTable(tbl)
-    if #ObjectPool.tables < ObjectPool.maxPoolSize then
-        table.insert(ObjectPool.tables, tbl)
-    end
-end
-
--- Clear all pools (useful for memory management)
-function LuaFlex.clearObjectPools()
-    ObjectPool.arrays = {}
-    ObjectPool.tables = {}
-end
-
--- Get pool statistics (useful for debugging)
-function LuaFlex.getPoolStats()
-    return {
-        arrays = #ObjectPool.arrays,
-        tables = #ObjectPool.tables,
-        maxSize = ObjectPool.maxPoolSize
-    }
-end
-
--- Configure the maximum pool size (useful for memory-constrained environments)
-function LuaFlex.setMaxPoolSize(size)
-    ObjectPool.maxPoolSize = math.max(0, size or 100)
-    
-    -- Trim pools if they exceed the new limit
-    while #ObjectPool.arrays > ObjectPool.maxPoolSize do
-        table.remove(ObjectPool.arrays)
-    end
-    while #ObjectPool.tables > ObjectPool.maxPoolSize do
-        table.remove(ObjectPool.tables)
-    end
-end
+-- Removed object pooling: premature optimization and added complexity
 
 -- Enums for flexbox properties
 LuaFlex.FlexDirection = {
@@ -161,7 +87,7 @@ end
 LuaFlex.Node = {}
 LuaFlex.Node.__index = LuaFlex.Node
 
-function LuaFlex.Node.new()
+function LuaFlex.Node.new(props)
     local node = {
         -- Style properties
         flexDirection = LuaFlex.FlexDirection.Column,
@@ -172,6 +98,7 @@ function LuaFlex.Node.new()
         flexWrap = LuaFlex.FlexWrap.NoWrap,
         positionType = LuaFlex.PositionType.Static,
         display = LuaFlex.Display.Flex,
+        order = 0,
         
         -- Flex properties
         flexGrow = 0,
@@ -248,7 +175,92 @@ function LuaFlex.Node.new()
         }
     }
     
-    return setmetatable(node, LuaFlex.Node)
+    node = setmetatable(node, LuaFlex.Node)
+    
+    if props and type(props) == "table" then
+        -- Simple property initializer; does not call setters to avoid dirty propagation during construction
+        local function parseDimension(val)
+            if val == nil then
+                return createValue(nil, LuaFlex.ValueType.Undefined)
+            end
+            local t = type(val)
+            if t == "number" then
+                return createValue(val, LuaFlex.ValueType.Point)
+            elseif t == "string" then
+                if val == "auto" then
+                    return createValue(nil, LuaFlex.ValueType.Auto)
+                end
+                local pct = string.match(val, "^(%-?%d+%.?%d*)%%$")
+                if pct then
+                    return createValue(tonumber(pct), LuaFlex.ValueType.Percent)
+                end
+                local num = tonumber(val)
+                if num then
+                    return createValue(num, LuaFlex.ValueType.Point)
+                end
+            end
+            return createValue(nil, LuaFlex.ValueType.Undefined)
+        end
+        
+        -- Data-driven property initialization
+        local propertyMap = {
+            -- Direct value properties
+            flexDirection = "flexDirection",
+            justifyContent = "justifyContent", 
+            alignItems = "alignItems",
+            alignSelf = "alignSelf",
+            alignContent = "alignContent",
+            flexWrap = "flexWrap",
+            positionType = "positionType",
+            display = "display",
+            order = "order",
+            flexGrow = "flexGrow",
+            flexShrink = "flexShrink",
+            
+            -- Dimension properties (need parsing)
+            flexBasis = "flexBasis_parsed",
+            width = "width_parsed",
+            height = "height_parsed", 
+            minWidth = "minWidth_parsed",
+            minHeight = "minHeight_parsed",
+            maxWidth = "maxWidth_parsed",
+            maxHeight = "maxHeight_parsed"
+        }
+        
+        -- Apply direct and parsed properties
+        for propKey, nodeKey in pairs(propertyMap) do
+            local value = props[propKey]
+            if value ~= nil then
+                if nodeKey:match("_parsed$") then
+                    -- Parse dimension value
+                    local realNodeKey = nodeKey:gsub("_parsed$", "")
+                    node[realNodeKey] = parseDimension(value)
+                else
+                    -- Direct assignment
+                    node[nodeKey] = value
+                end
+            end
+        end
+        
+        -- Handle shorthand properties
+        if props.margin then
+            local marginValue = parseDimension(props.margin)
+            node.marginTop = marginValue
+            node.marginRight = marginValue
+            node.marginBottom = marginValue
+            node.marginLeft = marginValue
+        end
+        
+        if props.padding then
+            local paddingValue = parseDimension(props.padding)
+            node.paddingTop = paddingValue
+            node.paddingRight = paddingValue
+            node.paddingBottom = paddingValue
+            node.paddingLeft = paddingValue
+        end
+    end
+    
+    return node
 end
 
 -- Style setter methods
@@ -503,6 +515,17 @@ function LuaFlex.Node:setDisplay(display)
     return self
 end
 
+function LuaFlex.Node:setOrder(order)
+    if self.order ~= order then
+        self.order = order
+        -- Order changes affect the parent's layout, not just this node
+        if self.parent then
+            self.parent:markDirty()
+        end
+    end
+    return self
+end
+
 -- Set a custom measure function for intrinsic content sizing
 -- measureFunc should be a function(node, availableWidth, availableHeight) -> measuredWidth, measuredHeight
 function LuaFlex.Node:setMeasureFunc(measureFunc)
@@ -628,50 +651,7 @@ local function resolveValue(value, parentSize)
     end
 end
 
--- Helper function to get the main axis size
-local function getMainAxisSize(node)
-    if node:isFlexDirectionRow() then
-        return node.layout.width
-    else
-        return node.layout.height
-    end
-end
-
--- Helper function to get the cross axis size
-local function getCrossAxisSize(node)
-    if node:isFlexDirectionRow() then
-        return node.layout.height
-    else
-        return node.layout.width
-    end
-end
-
--- Helper function to set main axis size
-local function setMainAxisSize(node, size)
-    if node:isFlexDirectionRow() then
-        node.layout.width = size
-    else
-        node.layout.height = size
-    end
-end
-
--- Helper function to set cross axis size
-local function setCrossAxisSize(node, size)
-    if node:isFlexDirectionRow() then
-        node.layout.height = size
-    else
-        node.layout.width = size
-    end
-end
-
--- Helper function to get main axis position
-local function getMainAxisPosition(node)
-    if node:isFlexDirectionRow() then
-        return node.layout.left
-    else
-        return node.layout.top
-    end
-end
+-- (Removed several unused helpers to reduce complexity and linter warnings)
 
 -- Helper function to set main axis position
 local function setMainAxisPosition(node, position)
@@ -740,31 +720,7 @@ local function getBorderBottom(node)
     return resolveValue(node.borderBottom, 0)
 end
 
--- Calculate total margin, padding, border for main axis
-local function getMainAxisMarginPaddingBorder(node, isMainAxisRow, parentWidth, parentHeight)
-    if isMainAxisRow then
-        return getMarginLeft(node, parentWidth) + getMarginRight(node, parentWidth) +
-               getPaddingLeft(node, parentWidth) + getPaddingRight(node, parentWidth) +
-               getBorderLeft(node) + getBorderRight(node)
-    else
-        return getMarginTop(node, parentHeight) + getMarginBottom(node, parentHeight) +
-               getPaddingTop(node, parentHeight) + getPaddingBottom(node, parentHeight) +
-               getBorderTop(node) + getBorderBottom(node)
-    end
-end
-
--- Calculate total margin, padding, border for cross axis
-local function getCrossAxisMarginPaddingBorder(node, isMainAxisRow, parentWidth, parentHeight)
-    if isMainAxisRow then
-        return getMarginTop(node, parentHeight) + getMarginBottom(node, parentHeight) +
-               getPaddingTop(node, parentHeight) + getPaddingBottom(node, parentHeight) +
-               getBorderTop(node) + getBorderBottom(node)
-    else
-        return getMarginLeft(node, parentWidth) + getMarginRight(node, parentWidth) +
-               getPaddingLeft(node, parentWidth) + getPaddingRight(node, parentWidth) +
-               getBorderLeft(node) + getBorderRight(node)
-    end
-end
+-- (Removed unused margin+padding aggregators)
 
 -- Get margin for positioning (margin only, not padding/border)
 local function getMainAxisMargin(node, isMainAxisRow, parentWidth, parentHeight)
@@ -799,6 +755,25 @@ local function getContentArea(node, parentWidth, parentHeight)
     local contentHeight = node.layout.height - paddingTop - paddingBottom - borderTop - borderBottom
     
     return math.max(0, contentWidth), math.max(0, contentHeight)
+end
+
+-- Clamp a main-axis size against min/max constraints
+local function clampMainAxis(node, isMainAxisRow, size, availableMainSize)
+    local minVal, maxVal
+    if isMainAxisRow then
+        minVal = resolveValue(node.minWidth, availableMainSize)
+        maxVal = resolveValue(node.maxWidth, availableMainSize)
+    else
+        minVal = resolveValue(node.minHeight, availableMainSize)
+        maxVal = resolveValue(node.maxHeight, availableMainSize)
+    end
+    if maxVal > 0 and size > maxVal then
+        size = maxVal
+    end
+    if minVal > 0 and size < minVal then
+        size = minVal
+    end
+    return size
 end
 
 -- Calculate the baseline position of a node
@@ -983,20 +958,7 @@ local function calculateIntrinsicSize(node, availableWidth, availableHeight)
     return width, height
 end
 
--- Calculate the total flex grow and shrink factors
-local function calculateFlexFactors(children)
-    local totalFlexGrow = 0
-    local totalFlexShrink = 0
-    
-    for _, child in ipairs(children) do
-        if child.display ~= LuaFlex.Display.None then
-            totalFlexGrow = totalFlexGrow + child.flexGrow
-            totalFlexShrink = totalFlexShrink + child.flexShrink
-        end
-    end
-    
-    return totalFlexGrow, totalFlexShrink
-end
+-- (Removed unused flex factor aggregator)
 
 -- Main layout function
 function LuaFlex.Node:calculateLayout(parentWidth, parentHeight)
@@ -1089,17 +1051,17 @@ end
 local function partitionChildrenIntoLines(children, childMainSizes, childMargins, availableMainSize, flexWrap)
     if flexWrap == LuaFlex.FlexWrap.NoWrap then
         -- Single line - return all children in one line
-        local singleLine = getArray()
+        local singleLine = {}
         for _, child in ipairs(children) do
             table.insert(singleLine, child)
         end
-        local lines = getArray()
+        local lines = {}
         table.insert(lines, singleLine)
         return lines
     end
     
-    local lines = getArray()
-    local currentLine = getArray()
+    local lines = {}
+    local currentLine = {}
     local currentLineMainSize = 0
     
     for i, child in ipairs(children) do
@@ -1111,7 +1073,7 @@ local function partitionChildrenIntoLines(children, childMainSizes, childMargins
         if #currentLine > 0 and (currentLineMainSize + totalChildSize) > availableMainSize then
             -- Start a new line
             table.insert(lines, currentLine)
-            currentLine = getArray()
+            currentLine = {}
             table.insert(currentLine, child)
             currentLineMainSize = totalChildSize
         else
@@ -1139,146 +1101,374 @@ local function partitionChildrenIntoLines(children, childMainSizes, childMargins
     return lines
 end
 
--- Layout a single flex line
-local function layoutFlexLine(self, lineChildren, availableMainSize, availableCrossSize, 
-                              childMainSizes, childCrossSizes, childMargins, isMainAxisRow, 
-                              mainStartOffset, crossStartOffset)
+-- Resolve flexible lengths for a flex line using CSS spec algorithm
+local function resolveFlexibleLengths(container, lineChildren, availableMainSize, childMainSizes, childMargins, originalIndices)
+    local isMainAxisRow = container:isFlexDirectionRow()
+    local resolvedSizes = {}
+    local lineChildMargins = {}
     
-    -- Calculate flex grow/shrink for this line
-    local lineTotalIntrinsicMainSize = 0
-    local lineChildMainSizes = getArray()
-    local lineChildMargins = getArray()
-    
+    -- Build line-specific data structures
     for i, child in ipairs(lineChildren) do
-        -- Find the original index of this child
-        local originalIndex = nil
-        for j, originalChild in ipairs(self.children) do
-            if originalChild == child then
-                originalIndex = j
-                break
-            end
-        end
+        local originalIndex = originalIndices[child]
         
         if originalIndex then
-            lineChildMainSizes[i] = childMainSizes[originalIndex]
+            resolvedSizes[i] = childMainSizes[originalIndex]
             lineChildMargins[i] = childMargins[originalIndex]
-            local margin = childMargins[originalIndex]
-            lineTotalIntrinsicMainSize = lineTotalIntrinsicMainSize + 
-                childMainSizes[originalIndex] + margin.mainStart + margin.mainEnd
+        else
+            resolvedSizes[i] = 0
+            lineChildMargins[i] = {mainStart = 0, mainEnd = 0}
         end
     end
     
-    local remainingSpace = availableMainSize - lineTotalIntrinsicMainSize
+    -- Calculate total space used by items and margins
+    local totalUsedSpace = 0
+    for i, _ in ipairs(lineChildren) do
+        local margin = lineChildMargins[i]
+        totalUsedSpace = totalUsedSpace + resolvedSizes[i] + margin.mainStart + margin.mainEnd
+    end
     
-    -- Distribute remaining space based on flex-grow/flex-shrink
+    local remainingSpace = availableMainSize - totalUsedSpace
+    
+    -- Early exit if no flexible items
+    local hasFlexibleItems = false
+    for _, child in ipairs(lineChildren) do
+        if child.flexGrow > 0 or child.flexShrink > 0 then
+            hasFlexibleItems = true
+            break
+        end
+    end
+    
+    if not hasFlexibleItems then
+        return resolvedSizes
+    end
+    
+    -- Apply flexible length resolution algorithm
     if remainingSpace > 0 then
-        -- Growing
+        -- Growing: distribute positive space via flex-grow
         local totalFlexGrow = 0
         for _, child in ipairs(lineChildren) do
-            if child.display ~= LuaFlex.Display.None then
-                totalFlexGrow = totalFlexGrow + child.flexGrow
-            end
+            totalFlexGrow = totalFlexGrow + child.flexGrow
         end
         
         if totalFlexGrow > 0 then
             for i, child in ipairs(lineChildren) do
                 if child.flexGrow > 0 then
                     local growAmount = (child.flexGrow / totalFlexGrow) * remainingSpace
-                    lineChildMainSizes[i] = lineChildMainSizes[i] + growAmount
+                    local targetSize = resolvedSizes[i] + growAmount
+                    
+                    -- Clamp against max constraint
+                    targetSize = clampMainAxis(child, isMainAxisRow, targetSize, availableMainSize)
+                    resolvedSizes[i] = targetSize
                 end
             end
         end
     elseif remainingSpace < 0 then
-        -- Shrinking
+        -- Shrinking: distribute negative space via flex-shrink
         local totalFlexShrink = 0
-        for _, child in ipairs(lineChildren) do
-            if child.display ~= LuaFlex.Display.None then
-                totalFlexShrink = totalFlexShrink + child.flexShrink
+        for i, child in ipairs(lineChildren) do
+            if child.flexShrink > 0 then
+                totalFlexShrink = totalFlexShrink + child.flexShrink * resolvedSizes[i]
             end
         end
         
         if totalFlexShrink > 0 then
             for i, child in ipairs(lineChildren) do
                 if child.flexShrink > 0 then
-                    local shrinkAmount = (child.flexShrink / totalFlexShrink) * math.abs(remainingSpace)
-                    lineChildMainSizes[i] = math.max(0, lineChildMainSizes[i] - shrinkAmount)
+                    local shrinkRatio = (child.flexShrink * resolvedSizes[i]) / totalFlexShrink
+                    local shrinkAmount = shrinkRatio * math.abs(remainingSpace)
+                    local targetSize = resolvedSizes[i] - shrinkAmount
+                    
+                    -- Clamp against min constraint
+                    targetSize = clampMainAxis(child, isMainAxisRow, targetSize, availableMainSize)
+                    resolvedSizes[i] = targetSize
                 end
             end
         end
     end
     
-    -- Position children in this line based on justify-content
+    return resolvedSizes
+end
+
+-- Position flex items along main axis using justify-content
+local function positionFlexItemsMainAxis(container, lineChildren, resolvedMainSizes, 
+                                         lineChildMargins, availableMainSize, mainStartOffset)
     local currentMainPosition = mainStartOffset
     local spacing = 0
     
-    if self.justifyContent == LuaFlex.JustifyContent.FlexEnd then
-        currentMainPosition = mainStartOffset + availableMainSize
-        for i = #lineChildren, 1, -1 do
-            local margin = lineChildMargins[i]
-            currentMainPosition = currentMainPosition - lineChildMainSizes[i] - margin.mainEnd
-            setMainAxisPosition(lineChildren[i], currentMainPosition + margin.mainStart)
-            currentMainPosition = currentMainPosition - margin.mainStart
-        end
-    elseif self.justifyContent == LuaFlex.JustifyContent.Center then
-        local totalUsedSpace = lineTotalIntrinsicMainSize
-        currentMainPosition = mainStartOffset + (availableMainSize - totalUsedSpace) / 2
-        
-        for i, child in ipairs(lineChildren) do
-            local margin = lineChildMargins[i]
-            currentMainPosition = currentMainPosition + margin.mainStart
-            setMainAxisPosition(child, currentMainPosition)
-            currentMainPosition = currentMainPosition + lineChildMainSizes[i] + margin.mainEnd
-        end
-    elseif self.justifyContent == LuaFlex.JustifyContent.SpaceBetween then
-        if #lineChildren > 1 then
-            spacing = math.max(0, remainingSpace / (#lineChildren - 1))
-        end
-        
-        for i, child in ipairs(lineChildren) do
-            local margin = lineChildMargins[i]
-            currentMainPosition = currentMainPosition + margin.mainStart
-            setMainAxisPosition(child, currentMainPosition)
-            currentMainPosition = currentMainPosition + lineChildMainSizes[i] + margin.mainEnd + spacing
-        end
-    elseif self.justifyContent == LuaFlex.JustifyContent.SpaceAround then
-        spacing = math.max(0, remainingSpace / #lineChildren)
-        currentMainPosition = mainStartOffset + spacing / 2
-        
-        for i, child in ipairs(lineChildren) do
-            local margin = lineChildMargins[i]
-            currentMainPosition = currentMainPosition + margin.mainStart
-            setMainAxisPosition(child, currentMainPosition)
-            currentMainPosition = currentMainPosition + lineChildMainSizes[i] + margin.mainEnd + spacing
-        end
-    elseif self.justifyContent == LuaFlex.JustifyContent.SpaceEvenly then
-        spacing = math.max(0, remainingSpace / (#lineChildren + 1))
-        currentMainPosition = mainStartOffset + spacing
-        
-        for i, child in ipairs(lineChildren) do
-            local margin = lineChildMargins[i]
-            currentMainPosition = currentMainPosition + margin.mainStart
-            setMainAxisPosition(child, currentMainPosition)
-            currentMainPosition = currentMainPosition + lineChildMainSizes[i] + margin.mainEnd + spacing
-        end
-    else -- FlexStart (default)
-        for i, child in ipairs(lineChildren) do
-            local margin = lineChildMargins[i]
-            currentMainPosition = currentMainPosition + margin.mainStart
-            setMainAxisPosition(child, currentMainPosition)
-            currentMainPosition = currentMainPosition + lineChildMainSizes[i] + margin.mainEnd
+    -- Calculate actual used space after flexible length resolution
+    local totalUsedSpace = 0
+    for i, _ in ipairs(lineChildren) do
+        local margin = lineChildMargins[i]
+        totalUsedSpace = totalUsedSpace + resolvedMainSizes[i] + margin.mainStart + margin.mainEnd
+    end
+    
+    local remainingSpace = availableMainSize - totalUsedSpace
+    
+    -- Handle auto margins first (they consume remaining space)
+    local autoMarginCount = 0
+    for i, _ in ipairs(lineChildren) do
+        local margin = lineChildMargins[i]
+        if margin.mainStartType == LuaFlex.ValueType.Auto or margin.mainEndType == LuaFlex.ValueType.Auto then
+            autoMarginCount = autoMarginCount + 1
         end
     end
     
-    -- Note: lineChildMainSizes is returned to the caller and will be recycled by them
-    -- Only recycle lineChildMargins here
-    recycleArray(lineChildMargins)
+    if autoMarginCount > 0 and remainingSpace > 0 then
+        local spacePerAutoMargin = remainingSpace / autoMarginCount
+        for i, _ in ipairs(lineChildren) do
+            local margin = lineChildMargins[i]
+            if margin.mainStartType == LuaFlex.ValueType.Auto then
+                margin.mainStart = margin.mainStart + spacePerAutoMargin
+            end
+            if margin.mainEndType == LuaFlex.ValueType.Auto then
+                margin.mainEnd = margin.mainEnd + spacePerAutoMargin
+            end
+        end
+        spacing = 0
+    else
+        -- Apply justify-content distribution
+        if container.justifyContent == LuaFlex.JustifyContent.FlexEnd then
+            currentMainPosition = mainStartOffset + remainingSpace
+        elseif container.justifyContent == LuaFlex.JustifyContent.Center then
+            currentMainPosition = mainStartOffset + remainingSpace / 2
+        elseif container.justifyContent == LuaFlex.JustifyContent.SpaceBetween then
+            if #lineChildren > 1 then
+                spacing = math.max(0, remainingSpace / (#lineChildren - 1))
+            end
+        elseif container.justifyContent == LuaFlex.JustifyContent.SpaceAround then
+            spacing = math.max(0, remainingSpace / #lineChildren)
+            currentMainPosition = mainStartOffset + spacing / 2
+        elseif container.justifyContent == LuaFlex.JustifyContent.SpaceEvenly then
+            spacing = math.max(0, remainingSpace / (#lineChildren + 1))
+            currentMainPosition = mainStartOffset + spacing
+        end
+    end
     
-    return lineChildMainSizes
+    -- Position each item
+    for i, child in ipairs(lineChildren) do
+        local margin = lineChildMargins[i]
+        currentMainPosition = currentMainPosition + margin.mainStart
+        setMainAxisPosition(child, currentMainPosition)
+        currentMainPosition = currentMainPosition + resolvedMainSizes[i] + margin.mainEnd + spacing
+    end
 end
 
+-- Layout a complete flex line: resolve flexible lengths, position on both axes
+local function layoutLine(container, lineChildren, availableMainSize, availableCrossSize,
+                          childMainSizes, childCrossSizes, childMargins, 
+                          mainStartOffset, crossStartOffset, lineCrossSize, originalIndices)
+    local isMainAxisRow = container:isFlexDirectionRow()
+    
+    -- Step 1: Resolve flexible lengths for this line
+    local resolvedMainSizes = resolveFlexibleLengths(container, lineChildren, availableMainSize,
+                                                     childMainSizes, childMargins, originalIndices)
+    
+    -- Step 2: Build line-specific margins for positioning
+    local lineChildMargins = {}
+    for i, child in ipairs(lineChildren) do
+        local originalIndex = originalIndices[child]
+        if originalIndex then
+            lineChildMargins[i] = childMargins[originalIndex]
+        end
+    end
+    
+    -- Step 3: Position items along main axis using justify-content
+    positionFlexItemsMainAxis(container, lineChildren, resolvedMainSizes, 
+                              lineChildMargins, availableMainSize, mainStartOffset)
+    
+    -- Step 4: Precompute baseline alignment reference if needed
+    local hasBaselineItems = false
+    local maxBaselineFromTop = 0
+    local baselineItems = {}
+    
+    for i, child in ipairs(lineChildren) do
+        local originalIndex = originalIndices[child]
+        if originalIndex then
+            local alignSelf = child.alignSelf
+            if alignSelf == LuaFlex.AlignSelf.Auto then
+                alignSelf = container.alignItems
+            end
+            if alignSelf == LuaFlex.AlignItems.Baseline then
+                local margin = childMargins[originalIndex]
+                local crossSizeRaw = childCrossSizes[originalIndex]
+                local mainCandidate = resolvedMainSizes[i]
+                
+                local baseline = 0
+                if type(child.baselineFunc) == "function" then
+                    local widthCandidate, heightCandidate
+                    if isMainAxisRow then
+                        widthCandidate = mainCandidate
+                        heightCandidate = crossSizeRaw
+                    else
+                        widthCandidate = crossSizeRaw
+                        heightCandidate = mainCandidate
+                    end
+                    baseline = child.baselineFunc(child, widthCandidate, heightCandidate) or 0
+                else
+                    -- Use bottom of content area as baseline if no baseline function
+                    baseline = crossSizeRaw
+                end
+                
+                local baselineFromTop = margin.crossStart + baseline
+                maxBaselineFromTop = math.max(maxBaselineFromTop, baselineFromTop)
+                
+                baselineItems[i] = {
+                    child = child,
+                    originalIndex = originalIndex,
+                    baseline = baseline,
+                    margin = margin,
+                    crossSize = crossSizeRaw
+                }
+                hasBaselineItems = true
+            end
+        end
+    end
+    
+    -- Step 5: Position children along cross axis and set final dimensions
+    for i, child in ipairs(lineChildren) do
+        local originalIndex = originalIndices[child]
+        
+        if originalIndex then
+            local alignSelf = child.alignSelf
+            if alignSelf == LuaFlex.AlignSelf.Auto then
+                alignSelf = container.alignItems
+            end
+            
+            local margin = childMargins[originalIndex]
+            local crossPosition = crossStartOffset
+            local crossSize = childCrossSizes[originalIndex]
+            local availableCrossForChild = lineCrossSize - margin.crossStart - margin.crossEnd
+            
+            if alignSelf == LuaFlex.AlignItems.FlexEnd then
+                crossPosition = crossStartOffset + lineCrossSize - crossSize - margin.crossEnd
+            elseif alignSelf == LuaFlex.AlignItems.Center then
+                crossPosition = crossStartOffset + margin.crossStart + (availableCrossForChild - crossSize) / 2
+            elseif alignSelf == LuaFlex.AlignItems.Stretch then
+                -- Only stretch if cross-axis dimension is auto, not explicitly set
+                local shouldStretch = false
+                if isMainAxisRow then
+                    shouldStretch = (child.height.type == LuaFlex.ValueType.Auto or 
+                                   child.height.type == LuaFlex.ValueType.Undefined)
+                else
+                    shouldStretch = (child.width.type == LuaFlex.ValueType.Auto or
+                                   child.width.type == LuaFlex.ValueType.Undefined)
+                end
+                
+                if shouldStretch then
+                    local stretchedSize = math.max(0, availableCrossForChild)
+                    
+                    -- Clamp against min/max constraints
+                    if isMainAxisRow then
+                        local minH = resolveValue(child.minHeight, availableCrossSize)
+                        local maxH = resolveValue(child.maxHeight, availableCrossSize)
+                        if maxH > 0 and stretchedSize > maxH then
+                            stretchedSize = maxH
+                        end
+                        if minH > 0 and stretchedSize < minH then
+                            stretchedSize = minH
+                        end
+                    else
+                        local minW = resolveValue(child.minWidth, availableCrossSize)
+                        local maxW = resolveValue(child.maxWidth, availableCrossSize)
+                        if maxW > 0 and stretchedSize > maxW then
+                            stretchedSize = maxW
+                        end
+                        if minW > 0 and stretchedSize < minW then
+                            stretchedSize = minW
+                        end
+                    end
+                    
+                    crossSize = stretchedSize
+                end
+                
+                crossPosition = crossStartOffset + margin.crossStart
+            elseif alignSelf == LuaFlex.AlignItems.Baseline then
+                if hasBaselineItems and baselineItems[i] then
+                    local baselineInfo = baselineItems[i]
+                    local targetBaselineFromTop = maxBaselineFromTop
+                    crossPosition = crossStartOffset + (targetBaselineFromTop - baselineInfo.baseline - margin.crossStart)
+                else
+                    crossPosition = crossStartOffset + margin.crossStart
+                end
+            else -- FlexStart (default)
+                crossPosition = crossStartOffset + margin.crossStart
+            end
+            
+            setCrossAxisPosition(child, crossPosition)
+            
+            -- Set final dimensions with cross-axis clamping
+            local actualMainSize = resolvedMainSizes[i]
+            if isMainAxisRow then
+                child.layout.width = actualMainSize
+                local clampedCross = crossSize
+                local minH = resolveValue(child.minHeight, availableCrossSize)
+                local maxH = resolveValue(child.maxHeight, availableCrossSize)
+                if maxH > 0 and clampedCross > maxH then
+                    clampedCross = maxH
+                end
+                if minH > 0 and clampedCross < minH then
+                    clampedCross = minH
+                end
+                child.layout.height = clampedCross
+            else
+                local clampedCross = crossSize
+                local minW = resolveValue(child.minWidth, availableCrossSize)
+                local maxW = resolveValue(child.maxWidth, availableCrossSize)
+                if maxW > 0 and clampedCross > maxW then
+                    clampedCross = maxW
+                end
+                if minW > 0 and clampedCross < minW then
+                    clampedCross = minW
+                end
+                child.layout.width = clampedCross
+                child.layout.height = actualMainSize
+            end
+            
+            -- Handle position: relative - apply visual offset after normal layout
+            if child.positionType == LuaFlex.PositionType.Relative then
+                local parentContentWidth, parentContentHeight
+                if isMainAxisRow then
+                    parentContentWidth = availableMainSize
+                    parentContentHeight = availableCrossSize
+                else
+                    parentContentWidth = availableCrossSize
+                    parentContentHeight = availableMainSize
+                end
+
+                -- 'top' and 'bottom' control vertical offset. 'top' wins if both are set.
+                local offsetY = 0
+                if child.top.type ~= LuaFlex.ValueType.Undefined then
+                    offsetY = resolveValue(child.top, parentContentHeight)
+                elseif child.bottom.type ~= LuaFlex.ValueType.Undefined then
+                    offsetY = -resolveValue(child.bottom, parentContentHeight)
+                end
+
+                -- 'left' and 'right' control horizontal offset. 'left' wins if both are set.
+                local offsetX = 0
+                if child.left.type ~= LuaFlex.ValueType.Undefined then
+                    offsetX = resolveValue(child.left, parentContentWidth)
+                elseif child.right.type ~= LuaFlex.ValueType.Undefined then
+                    offsetX = -resolveValue(child.right, parentContentWidth)
+                end
+                
+                -- Apply the offset to the final computed position
+                child.layout.left = child.layout.left + offsetX
+                child.layout.top = child.layout.top + offsetY
+            end
+            
+            -- Recursively layout children
+            child:calculateLayout(child.layout.width, child.layout.height)
+        end
+    end
+    
+    return resolvedMainSizes
+end
+
+
+
 -- Layout absolutely positioned children
-local function layoutAbsoluteChildren(self, absoluteChildren, contentWidth, contentHeight, 
-                                      mainStartOffset, crossStartOffset, isMainAxisRow)
+local function layoutAbsoluteChildren(absoluteChildren, contentWidth, contentHeight, 
+                                      mainStartOffset, crossStartOffset)
     for _, child in ipairs(absoluteChildren) do
         local childLeft = child.layout.left
         local childTop = child.layout.top
@@ -1365,8 +1555,8 @@ end
 
 -- Layout children using flexbox algorithm
 function LuaFlex.Node:layoutChildren()
-    local children = getArray()
-    local absoluteChildren = getArray()
+    local children = {}
+    local absoluteChildren = {}
     
     -- Filter children by positioning type
     for _, child in ipairs(self.children) do
@@ -1378,6 +1568,23 @@ function LuaFlex.Node:layoutChildren()
             end
         end
     end
+    
+    -- Sort children by order property (lower values come first)
+    -- Items with the same order maintain their source document order
+    -- Create index map once for O(1) lookups during sorting (avoids O(N² log N) complexity)
+    local originalIndices = {}
+    for i, child in ipairs(self.children) do
+        originalIndices[child] = i
+    end
+    
+    table.sort(children, function(a, b)
+        if a.order == b.order then
+            -- O(1) index lookup instead of O(N) search
+            return originalIndices[a] < originalIndices[b]
+        else
+            return a.order < b.order
+        end
+    end)
     
     local isMainAxisRow = self:isFlexDirectionRow()
     
@@ -1401,35 +1608,35 @@ function LuaFlex.Node:layoutChildren()
     -- If no normally positioned children, just layout absolute children
     if #children == 0 then
         if #absoluteChildren > 0 then
-            layoutAbsoluteChildren(self, absoluteChildren, contentWidth, contentHeight, 
-                                   mainStartOffset, crossStartOffset, isMainAxisRow)
+            layoutAbsoluteChildren(absoluteChildren, contentWidth, contentHeight, 
+                                   mainStartOffset, crossStartOffset)
         end
-        -- Recycle arrays before returning
-        recycleArray(children)
-        recycleArray(absoluteChildren)
         return
     end
     
-    -- Calculate intrinsic sizes for all children
-    local childMainSizes = getArray()
-    local childCrossSizes = getArray()
-    local childMargins = getArray()
+    -- Phase 1: Establish flex base size and hypothetical main size
+    local childMainSizes = {}
+    local childCrossSizes = {}
+    local childMargins = {}
     
     for i, child in ipairs(children) do
-        local childWidth, childHeight = calculateIntrinsicSize(child, 
+        -- Compute flex base size (simplified): flex-basis > percent > auto(content) > undefined(content)
+        local baseMain
+        if child.flexBasis.type == LuaFlex.ValueType.Point then
+            baseMain = child.flexBasis.value
+        elseif child.flexBasis.type == LuaFlex.ValueType.Percent then
+            baseMain = (child.flexBasis.value / 100) * availableMainSize
+        else
+            local cw, ch = calculateIntrinsicSize(child,
+                isMainAxisRow and availableMainSize or availableCrossSize,
+                isMainAxisRow and availableCrossSize or availableMainSize)
+            baseMain = isMainAxisRow and cw or ch
+        end
+        baseMain = clampMainAxis(child, isMainAxisRow, baseMain, availableMainSize)
+        local cw2, ch2 = calculateIntrinsicSize(child,
             isMainAxisRow and availableMainSize or availableCrossSize,
             isMainAxisRow and availableCrossSize or availableMainSize)
-        
-        -- Calculate main and cross sizes
-        local mainSize = isMainAxisRow and childWidth or childHeight
-        local crossSize = isMainAxisRow and childHeight or childWidth
-        
-        -- Handle flex-basis
-        if child.flexBasis.type == LuaFlex.ValueType.Point then
-            mainSize = child.flexBasis.value
-        elseif child.flexBasis.type == LuaFlex.ValueType.Percent then
-            mainSize = (child.flexBasis.value / 100) * availableMainSize
-        end
+        local baseCross = isMainAxisRow and ch2 or cw2
         
         -- Calculate margins for this child
         local mainMarginStart, mainMarginEnd = getMainAxisMargin(child, isMainAxisRow, 
@@ -1437,39 +1644,44 @@ function LuaFlex.Node:layoutChildren()
         local crossMarginStart, crossMarginEnd = getCrossAxisMargin(child, isMainAxisRow,
             self.layout.width, self.layout.height)
         
-        -- Use pooled table for margin data
-        local marginData = getTable()
+        -- Margin data table
+        local marginData = {}
         marginData.mainStart = mainMarginStart
         marginData.mainEnd = mainMarginEnd
         marginData.crossStart = crossMarginStart
         marginData.crossEnd = crossMarginEnd
+        -- Preserve original margin types for auto-margin handling
+        if isMainAxisRow then
+            marginData.mainStartType = child.marginLeft.type
+            marginData.mainEndType = child.marginRight.type
+            marginData.crossStartType = child.marginTop.type
+            marginData.crossEndType = child.marginBottom.type
+        else
+            marginData.mainStartType = child.marginTop.type
+            marginData.mainEndType = child.marginBottom.type
+            marginData.crossStartType = child.marginLeft.type
+            marginData.crossEndType = child.marginRight.type
+        end
         childMargins[i] = marginData
         
-        childMainSizes[i] = mainSize
-        childCrossSizes[i] = crossSize
+        childMainSizes[i] = baseMain
+        childCrossSizes[i] = baseCross
     end
     
-    -- Partition children into flex lines
+    -- Phase 2: Partition children into flex lines
     local flexLines = partitionChildrenIntoLines(children, childMainSizes, childMargins, 
                                                  availableMainSize, self.flexWrap)
     
-    -- Layout each flex line
-    local lineMainSizes = getArray()
-    local lineCrossSizes = getArray()
-    local lineChildMainSizes = getArray()
+    -- Phase 3 & 4: Resolve flexible lengths per line, then position
+    -- lineMainSizes reserved for future refactor; remove to satisfy linter for now
+    -- local lineMainSizes = {}
+    local lineCrossSizes = {}
+    local lineChildMainSizes = {}
     
+    -- Calculate cross size for each line first (needed for line layout)
     for lineIndex, lineChildren in ipairs(flexLines) do
-        -- Layout this line
-        local actualChildMainSizes = layoutFlexLine(self, lineChildren, availableMainSize, 
-                                                     availableCrossSize, childMainSizes, 
-                                                     childCrossSizes, childMargins, 
-                                                     isMainAxisRow, mainStartOffset, crossStartOffset)
-        
-        lineChildMainSizes[lineIndex] = actualChildMainSizes
-        
-        -- Calculate the cross size needed by this line
         local maxCrossSize = 0
-        for i, child in ipairs(lineChildren) do
+        for _, child in ipairs(lineChildren) do
             local originalIndex = nil
             for j, originalChild in ipairs(children) do
                 if originalChild == child then
@@ -1522,170 +1734,32 @@ function LuaFlex.Node:layoutChildren()
         end
     end
     
-    -- Position children based on align-items within each line
+    -- Layout each flex line
     for lineIndex, lineChildren in ipairs(flexLines) do
         local lineCrossSize = lineCrossSizes[lineIndex]
         
-        for i, child in ipairs(lineChildren) do
-            local originalIndex = nil
-            for j, originalChild in ipairs(children) do
-                if originalChild == child then
-                    originalIndex = j
-                    break
-                end
-            end
-            
-            if originalIndex then
-                local alignSelf = child.alignSelf
-                if alignSelf == LuaFlex.AlignSelf.Auto then
-                    alignSelf = self.alignItems
-                end
-                
-                local margin = childMargins[originalIndex]
-                local crossPosition = currentCrossPosition
-                local crossSize = childCrossSizes[originalIndex]
-                local availableCrossForChild = lineCrossSize - margin.crossStart - margin.crossEnd
-                
-                if alignSelf == LuaFlex.AlignItems.FlexEnd then
-                    crossPosition = currentCrossPosition + lineCrossSize - crossSize - margin.crossEnd
-                elseif alignSelf == LuaFlex.AlignItems.Center then
-                    crossPosition = currentCrossPosition + margin.crossStart + (availableCrossForChild - crossSize) / 2
-                elseif alignSelf == LuaFlex.AlignItems.Stretch then
-                    if self.alignContent == LuaFlex.AlignContent.Stretch and #flexLines > 1 then
-                        crossSize = math.max(0, availableCrossForChild)
-                    end
-                    crossPosition = currentCrossPosition + margin.crossStart
-                elseif alignSelf == LuaFlex.AlignItems.Baseline then
-                    -- Baseline alignment - align all items in this line to the same baseline
-                    crossPosition = currentCrossPosition + margin.crossStart
-                    -- This will be adjusted later in baseline alignment pass
-                else -- FlexStart (default)
-                    crossPosition = currentCrossPosition + margin.crossStart
-                end
-                
-                setCrossAxisPosition(child, crossPosition)
-                
-                -- Set final dimensions
-                local actualMainSize = lineChildMainSizes[lineIndex] and lineChildMainSizes[lineIndex][i] or childMainSizes[originalIndex]
-                if isMainAxisRow then
-                    child.layout.width = actualMainSize
-                    child.layout.height = crossSize
-                else
-                    child.layout.width = crossSize
-                    child.layout.height = actualMainSize
-                end
-                
-                -- Recursively layout children
-                child:calculateLayout(child.layout.width, child.layout.height)
-            end
-        end
+        -- Layout this complete line using the new layoutLine function
+        local actualChildMainSizes = layoutLine(self, lineChildren, 
+                                                availableMainSize, availableCrossSize,
+                                                childMainSizes, childCrossSizes, childMargins,
+                                                mainStartOffset, currentCrossPosition, lineCrossSize, originalIndices)
         
-        -- Perform baseline alignment pass for this line
-        self:performBaselineAlignment(lineChildren, currentCrossPosition, isMainAxisRow)
+        lineChildMainSizes[lineIndex] = actualChildMainSizes
         
+        -- Move to next line
         currentCrossPosition = currentCrossPosition + lineCrossSize + lineSpacing
     end
     
     -- Layout absolutely positioned children after normal flow
     if #absoluteChildren > 0 then
-        layoutAbsoluteChildren(self, absoluteChildren, contentWidth, contentHeight, 
-                               mainStartOffset, crossStartOffset, isMainAxisRow)
+        layoutAbsoluteChildren(absoluteChildren, contentWidth, contentHeight, 
+                               mainStartOffset, crossStartOffset)
     end
     
-    -- Recycle all pooled objects to reduce GC pressure
-    recycleArray(children)
-    recycleArray(absoluteChildren)
-    recycleArray(childMainSizes)
-    recycleArray(childCrossSizes)
-    
-    -- Recycle margin data tables
-    for i = 1, #childMargins do
-        recycleTable(childMargins[i])
-    end
-    recycleArray(childMargins)
-    
-    -- Recycle line data
-    recycleArray(lineMainSizes)
-    recycleArray(lineCrossSizes)
-    
-    -- Recycle individual line child main size arrays
-    for i = 1, #lineChildMainSizes do
-        if lineChildMainSizes[i] then
-            recycleArray(lineChildMainSizes[i])
-        end
-    end
-    recycleArray(lineChildMainSizes)
-    
-    -- flexLines is returned by partitionChildrenIntoLines, so recycle it too
-    recycleArray(flexLines)
+    -- No object pooling; rely on Lua GC for temporary allocations
 end
 
--- Perform baseline alignment for children in a flex line
-function LuaFlex.Node:performBaselineAlignment(lineChildren, lineCrossStart, isMainAxisRow)
-    -- Find all children that need baseline alignment
-    local baselineChildren = getArray()
-    local maxBaseline = 0
-    
-    -- First pass: collect baseline children and find the maximum baseline
-    for _, child in ipairs(lineChildren) do
-        local alignSelf = child.alignSelf
-        if alignSelf == LuaFlex.AlignSelf.Auto then
-            alignSelf = self.alignItems
-        end
-        
-        if alignSelf == LuaFlex.AlignItems.Baseline then
-            table.insert(baselineChildren, child)
-            
-            -- Calculate this child's baseline
-            local baseline = calculateBaseline(child)
-            maxBaseline = math.max(maxBaseline, baseline)
-        end
-    end
-    
-    -- If no baseline children, nothing to do
-    if #baselineChildren == 0 then
-        return
-    end
-    
-    -- Second pass: adjust positions of baseline children
-    for _, child in ipairs(baselineChildren) do
-        local childBaseline = calculateBaseline(child)
-        local baselineOffset = maxBaseline - childBaseline
-        
-        -- Get current cross position and adjust by baseline offset
-        local currentCrossPos = isMainAxisRow and child.layout.top or child.layout.left
-        local newCrossPos = lineCrossStart + baselineOffset
-        
-        -- Find child's margins
-        local originalIndex = nil
-        for i, originalChild in ipairs(self.children) do
-            if originalChild == child then
-                originalIndex = i
-                break
-            end
-        end
-        
-        if originalIndex then
-            local crossMarginStart, _ = getCrossAxisMargin(child, isMainAxisRow, 
-                self.layout.width, self.layout.height)
-            newCrossPos = newCrossPos + crossMarginStart
-        end
-        
-        -- Apply the new position
-        setCrossAxisPosition(child, newCrossPos)
-        
-        -- Invalidate baseline cache since position changed
-        child:invalidateBaseline()
-        
-        -- Re-layout the child if its position changed significantly
-        if math.abs(newCrossPos - currentCrossPos) > 0.001 then
-            child:calculateLayout(child.layout.width, child.layout.height)
-        end
-    end
-    
-    -- Recycle the baseline children array
-    recycleArray(baselineChildren)
-end
+
 
 -- Convenience method for common flex properties
 function LuaFlex.Node:setFlex(grow, shrink, basis)
@@ -1718,3 +1792,4 @@ function LuaFlex.Node:printLayout(indent)
 end
 
 return LuaFlex
+

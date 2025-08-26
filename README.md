@@ -127,6 +127,57 @@ local largeText = LuaFlex.Node.new()
 textContainer:appendChild(smallText)
 textContainer:appendChild(largeText)
 textContainer:calculateLayout(300, 60)
+
+-- Visual reordering with order property
+local container = LuaFlex.Node.new()
+    :setWidth(200, LuaFlex.ValueType.Point)
+    :setHeight(100, LuaFlex.ValueType.Point)
+    :setFlexDirection(LuaFlex.FlexDirection.Row)
+
+-- Create items in source order: A, B, C
+local itemA = LuaFlex.Node.new():setOrder(2)  -- Will appear last
+local itemB = LuaFlex.Node.new():setOrder(1)  -- Will appear middle  
+local itemC = LuaFlex.Node.new():setOrder(0)  -- Will appear first
+
+container:appendChild(itemA)  -- Added first
+container:appendChild(itemB)  -- Added second
+container:appendChild(itemC)  -- Added third
+
+container:calculateLayout(200, 100)
+-- Visual order will be: C, B, A (not A, B, C)
+-- But tab order and screen readers still use source order: A, B, C
+
+-- Relative positioning example
+local container = LuaFlex.Node.new()
+    :setWidth(300, LuaFlex.ValueType.Point)
+    :setHeight(200, LuaFlex.ValueType.Point)
+    :setFlexDirection(LuaFlex.FlexDirection.Row)
+
+-- Normal flex item
+local item1 = LuaFlex.Node.new()
+    :setWidth(100, LuaFlex.ValueType.Point)
+    :setHeight(50, LuaFlex.ValueType.Point)
+
+-- Relatively positioned item - offset from its normal position
+local item2 = LuaFlex.Node.new()
+    :setWidth(100, LuaFlex.ValueType.Point)
+    :setHeight(50, LuaFlex.ValueType.Point)
+    :setPositionType(LuaFlex.PositionType.Relative)
+    :setTop(10, LuaFlex.ValueType.Point)    -- Move 10px down from normal position
+    :setLeft(20, LuaFlex.ValueType.Point)   -- Move 20px right from normal position
+
+-- Another normal item
+local item3 = LuaFlex.Node.new()
+    :setWidth(100, LuaFlex.ValueType.Point)
+    :setHeight(50, LuaFlex.ValueType.Point)
+
+container:appendChild(item1)
+container:appendChild(item2)
+container:appendChild(item3)
+
+container:calculateLayout(300, 200)
+-- item2 will appear visually offset but still "holds space" in the layout
+-- Other items position as if item2 were in its original location
 ```
 
 ## API Reference
@@ -188,6 +239,7 @@ node:setJustifyContent(justify)
 node:setAlignItems(align)
 node:setAlignContent(align)  -- For multi-line layouts
 node:setFlexWrap(wrap)
+node:setOrder(order)  -- Controls visual order of items
 node:setFlexGrow(grow)
 node:setFlexShrink(shrink)
 node:setFlexBasis(basis, valueType)
@@ -242,13 +294,7 @@ node:getComputedHeight()
 node:getBaseline()  -- Get text baseline position
 ```
 
-#### Performance and Memory Management
-```lua
--- Object pool management (automatic, but configurable)
-LuaFlex.getPoolStats()  -- Get current pool statistics
-LuaFlex.setMaxPoolSize(200)  -- Configure max pool size (default: 100)
-LuaFlex.clearObjectPools()  -- Force clear all pools (rarely needed)
-```
+
 
 ## Current Status
 
@@ -256,7 +302,9 @@ LuaFlex.clearObjectPools()  -- Force clear all pools (rarely needed)
 - Core flexbox properties (flex-direction, justify-content, align-items)
 - **Multi-line layouts** with flex-wrap support (wrap, nowrap, wrap-reverse)
 - **align-content** for distributing flex lines
+- **Visual reordering** with the order property
 - **Absolute positioning** with top/left/right/bottom support
+- **Relative positioning** with visual offset from normal layout position
 - **Auto dimension resolution** with custom measure functions and multi-pass layout
 - **Baseline alignment** with custom baseline functions for text alignment
 - Flex grow/shrink/basis calculations with multi-line support
@@ -265,22 +313,24 @@ LuaFlex.clearObjectPools()  -- Force clear all pools (rarely needed)
 - Tree structure and layout propagation
 
 🔄 **Optional Enhancements:**
-- position: relative support
+- Enhanced line breaking algorithm (considers flex-shrink during partitioning)
 - Additional flexbox edge cases
 
 ## Performance
 
 LuaFlex uses efficient algorithms and memory management:
-- **Object pooling** - Recycles temporary tables to minimize garbage collection pressure
+- **Correct CSS Flexbox implementation** - Follows the W3C specification algorithm precisely
 - Dirty flag system to avoid unnecessary recalculations
 - **Multi-pass layout** with intelligent caching for auto dimensions
-- Single-pass layout algorithm for simple cases
+- Proper flexible length resolution with min/max constraint handling
 - Optimized flex distribution calculations
 - Content measurement caching to avoid redundant calculations
+- Integrated baseline alignment without post-processing
 
-### High-Frequency Updates
-For applications with frequent layout updates (60+ FPS), LuaFlex automatically:
-- Pools and reuses temporary arrays during layout calculations
-- Caches measurement and baseline calculations
-- Minimizes memory allocations in hot paths
-- Provides configurable pool sizes for memory-constrained environments 
+### Algorithm Correctness
+LuaFlex now implements the correct CSS Flexbox algorithm:
+- **Proper flex-grow/flex-shrink distribution** with constraint handling
+- **Correct justify-content spacing** using remaining space after flexible length resolution
+- **Accurate align-items: stretch** respecting min/max constraints
+- **Integrated baseline alignment** computed during cross-axis positioning
+- **Separation of concerns** between flexible length resolution and positioning
