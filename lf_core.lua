@@ -90,7 +90,7 @@ LuaFlex.Node.__index = LuaFlex.Node
 function LuaFlex.Node.new(props)
     local node = {
         -- Style properties
-        flexDirection = LuaFlex.FlexDirection.Column,
+        flexDirection = LuaFlex.FlexDirection.Row,
         justifyContent = LuaFlex.JustifyContent.FlexStart,
         alignItems = LuaFlex.AlignItems.Stretch,
         alignSelf = LuaFlex.AlignSelf.Auto,
