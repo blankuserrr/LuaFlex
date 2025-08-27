@@ -1,4 +1,4 @@
--- LuaFlex: A performant and portable LuaU layout engine that conforms to the FlexBox specification
+-- LuaFlex: A performant and portable Lua layout engine that conforms to the FlexBox specification
 -- Inspired by Facebook's Yoga
 
 local LuaFlex = {}
