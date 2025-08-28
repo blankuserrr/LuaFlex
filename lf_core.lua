@@ -72,7 +72,8 @@ LuaFlex.ValueType = {
     Undefined = "undefined",
     Point = "point",
     Percent = "percent",
-    Auto = "auto"
+    Auto = "auto",
+    Content = "content"
 }
 
 -- Helper function to create a value with type
@@ -94,6 +95,8 @@ local function parseDimension(val)
     elseif t == "string" then
         if val == "auto" then
             return createValue(nil, LuaFlex.ValueType.Auto)
+        elseif val == "content" then
+            return createValue(nil, LuaFlex.ValueType.Content)
         end
         local pct = string.match(val, "^(%-?%d+%.?%d*)%%$")
         if pct then
@@ -132,8 +135,8 @@ function LuaFlex.Node.new(props)
         -- Dimensions
         width = createValue(),
         height = createValue(),
-        minWidth = createValue(),
-        minHeight = createValue(),
+        minWidth = createValue(nil, LuaFlex.ValueType.Auto),
+        minHeight = createValue(nil, LuaFlex.ValueType.Auto),
         maxWidth = createValue(),
         maxHeight = createValue(),
         
@@ -671,7 +674,9 @@ local function resolveValue(value, parentSize)
     elseif value.type == LuaFlex.ValueType.Percent then
         return (value.value / 100) * parentSize
     elseif value.type == LuaFlex.ValueType.Auto then
-        return 0  -- Will be calculated during layout
+        return "auto" -- Pass through the "auto" signal
+    elseif value.type == LuaFlex.ValueType.Content then
+        return "content" -- Pass through the "content" signal
     else
         return 0
     end
@@ -706,12 +711,12 @@ local function getMarginRight(node, parentWidth)
     return resolveValue(node.marginRight, parentWidth)
 end
 
-local function getMarginTop(node, parentHeight)
-    return resolveValue(node.marginTop, parentHeight)
+local function getMarginTop(node, parentHeight, parentWidth)
+    return resolveValue(node.marginTop, parentWidth) -- Always resolve against parent width
 end
 
-local function getMarginBottom(node, parentHeight)
-    return resolveValue(node.marginBottom, parentHeight)
+local function getMarginBottom(node, parentHeight, parentWidth)
+    return resolveValue(node.marginBottom, parentWidth) -- Always resolve against parent width
 end
 
 local function getPaddingLeft(node, parentWidth)
@@ -722,12 +727,12 @@ local function getPaddingRight(node, parentWidth)
     return resolveValue(node.paddingRight, parentWidth)
 end
 
-local function getPaddingTop(node, parentHeight)
-    return resolveValue(node.paddingTop, parentHeight)
+local function getPaddingTop(node, parentHeight, parentWidth)
+    return resolveValue(node.paddingTop, parentWidth) -- Always resolve against parent width
 end
 
-local function getPaddingBottom(node, parentHeight)
-    return resolveValue(node.paddingBottom, parentHeight)
+local function getPaddingBottom(node, parentHeight, parentWidth)
+    return resolveValue(node.paddingBottom, parentWidth) -- Always resolve against parent width
 end
 
 local function getBorderLeft(node)
@@ -753,13 +758,13 @@ local function getMainAxisMargin(node, isMainAxisRow, parentWidth, parentHeight)
     if isMainAxisRow then
         return getMarginLeft(node, parentWidth), getMarginRight(node, parentWidth)
     else
-        return getMarginTop(node, parentHeight), getMarginBottom(node, parentHeight)
+        return getMarginTop(node, parentHeight, parentWidth), getMarginBottom(node, parentHeight, parentWidth)
     end
 end
 
 local function getCrossAxisMargin(node, isMainAxisRow, parentWidth, parentHeight)
     if isMainAxisRow then
-        return getMarginTop(node, parentHeight), getMarginBottom(node, parentHeight)
+        return getMarginTop(node, parentHeight, parentWidth), getMarginBottom(node, parentHeight, parentWidth)
     else
         return getMarginLeft(node, parentWidth), getMarginRight(node, parentWidth)
     end
@@ -769,8 +774,8 @@ end
 local function getContentArea(node, parentWidth, parentHeight)
     local paddingLeft = getPaddingLeft(node, parentWidth)
     local paddingRight = getPaddingRight(node, parentWidth)
-    local paddingTop = getPaddingTop(node, parentHeight)
-    local paddingBottom = getPaddingBottom(node, parentHeight)
+    local paddingTop = getPaddingTop(node, parentHeight, parentWidth)
+    local paddingBottom = getPaddingBottom(node, parentHeight, parentWidth)
     
     local borderLeft = getBorderLeft(node)
     local borderRight = getBorderRight(node)
@@ -785,20 +790,29 @@ end
 
 -- Clamp a main-axis size against min/max constraints
 local function clampMainAxis(node, isMainAxisRow, size, availableMainSize)
-    local minVal, maxVal
-    if isMainAxisRow then
-        minVal = resolveValue(node.minWidth, availableMainSize)
-        maxVal = resolveValue(node.maxWidth, availableMainSize)
-    else
-        minVal = resolveValue(node.minHeight, availableMainSize)
-        maxVal = resolveValue(node.maxHeight, availableMainSize)
+    local minValResolved, maxValResolved
+    local minConstraint = isMainAxisRow and node.minWidth or node.minHeight
+    local maxConstraint = isMainAxisRow and node.maxWidth or node.maxHeight
+
+    -- Resolve max constraint first
+    maxValResolved = resolveValue(maxConstraint, availableMainSize)
+    if type(maxValResolved) == "number" and maxValResolved > 0 and size > maxValResolved then
+        size = maxValResolved
     end
-    if maxVal > 0 and size > maxVal then
-        size = maxVal
+    
+    -- Resolve min constraint
+    minValResolved = resolveValue(minConstraint, availableMainSize)
+    if minValResolved == "auto" then
+        -- Auto min-size resolves to intrinsic content size for flex items
+        local intrinsicWidth, intrinsicHeight = calculateIntrinsicSize(node, availableMainSize, 
+            isMainAxisRow and math.huge or availableMainSize)
+        minValResolved = isMainAxisRow and intrinsicWidth or intrinsicHeight
     end
-    if minVal > 0 and size < minVal then
-        size = minVal
+
+    if type(minValResolved) == "number" and minValResolved > 0 and size < minValResolved then
+        size = minValResolved
     end
+
     return size
 end
 
@@ -831,10 +845,10 @@ local function calculateBaseline(node)
             end
         else
             -- No children, use the bottom of the content area as baseline
-            local contentTop = getPaddingTop(node, node.layout.height) + getBorderTop(node)
+            local contentTop = getPaddingTop(node, node.layout.height, node.layout.width) + getBorderTop(node)
             local contentHeight = node.layout.height - 
-                                  getPaddingTop(node, node.layout.height) - 
-                                  getPaddingBottom(node, node.layout.height) - 
+                                  getPaddingTop(node, node.layout.height, node.layout.width) - 
+                                  getPaddingBottom(node, node.layout.height, node.layout.width) - 
                                   getBorderTop(node) - getBorderBottom(node)
             baselinePosition = contentTop + contentHeight
         end
@@ -864,8 +878,8 @@ local function measureFlexContainer(node, availableWidth, availableHeight)
     -- Account for padding and border
     local paddingLeft = getPaddingLeft(node, availableWidth)
     local paddingRight = getPaddingRight(node, availableWidth)
-    local paddingTop = getPaddingTop(node, availableHeight)
-    local paddingBottom = getPaddingBottom(node, availableHeight)
+    local paddingTop = getPaddingTop(node, availableHeight, availableWidth)
+    local paddingBottom = getPaddingBottom(node, availableHeight, availableWidth)
     local borderLeft = getBorderLeft(node)
     local borderRight = getBorderRight(node)
     local borderTop = getBorderTop(node)
@@ -1128,14 +1142,14 @@ local function partitionChildrenIntoLines(children, childMainSizes, childMargins
 end
 
 -- Resolve flexible lengths for a flex line using CSS spec algorithm
-local function resolveFlexibleLengths(container, lineChildren, availableMainSize, childMainSizes, childMargins, originalIndices)
+local function resolveFlexibleLengths(container, lineChildren, availableMainSize, childMainSizes, childMargins, childIndexMap)
     local isMainAxisRow = container:isFlexDirectionRow()
     local resolvedSizes = {}
     local lineChildMargins = {}
     
     -- Build line-specific data structures
     for i, child in ipairs(lineChildren) do
-        local originalIndex = originalIndices[child]
+        local originalIndex = childIndexMap[child]
         
         if originalIndex then
             resolvedSizes[i] = childMainSizes[originalIndex]
@@ -1302,17 +1316,17 @@ end
 -- Layout a complete flex line: resolve flexible lengths, position on both axes
 local function layoutLine(container, lineChildren, availableMainSize, availableCrossSize,
                           childMainSizes, childCrossSizes, childMargins, 
-                          mainStartOffset, crossStartOffset, lineCrossSize, originalIndices)
+                          mainStartOffset, crossStartOffset, lineCrossSize, childIndexMap)
     local isMainAxisRow = container:isFlexDirectionRow()
     
     -- Step 1: Resolve flexible lengths for this line
     local resolvedMainSizes = resolveFlexibleLengths(container, lineChildren, availableMainSize,
-                                                     childMainSizes, childMargins, originalIndices)
+                                                     childMainSizes, childMargins, childIndexMap)
     
     -- Step 2: Build line-specific margins for positioning
     local lineChildMargins = {}
     for i, child in ipairs(lineChildren) do
-        local originalIndex = originalIndices[child]
+        local originalIndex = childIndexMap[child]
         if originalIndex then
             lineChildMargins[i] = childMargins[originalIndex]
         end
@@ -1328,7 +1342,7 @@ local function layoutLine(container, lineChildren, availableMainSize, availableC
     local baselineItems = {}
     
     for i, child in ipairs(lineChildren) do
-        local originalIndex = originalIndices[child]
+        local originalIndex = childIndexMap[child]
         if originalIndex then
             local alignSelf = child.alignSelf
             if alignSelf == LuaFlex.AlignSelf.Auto then
@@ -1372,7 +1386,7 @@ local function layoutLine(container, lineChildren, availableMainSize, availableC
     
     -- Step 5: Position children along cross axis and set final dimensions
     for i, child in ipairs(lineChildren) do
-        local originalIndex = originalIndices[child]
+        local originalIndex = childIndexMap[child]
         
         if originalIndex then
             local alignSelf = child.alignSelf
@@ -1632,6 +1646,12 @@ function LuaFlex.Node:layoutChildren()
         end
     end)
     
+    -- Create a map for O(1) lookup of a child's index within the sorted `children` array
+    local sortedOriginalIndices = {}
+    for i, child in ipairs(children) do
+        sortedOriginalIndices[child] = i
+    end
+    
     local isMainAxisRow = self:isFlexDirectionRow()
     
     -- Calculate the content area (available space for children after padding/border)
@@ -1645,9 +1665,9 @@ function LuaFlex.Node:layoutChildren()
     
     if isMainAxisRow then
         mainStartOffset = getPaddingLeft(self, self.layout.width) + getBorderLeft(self)
-        crossStartOffset = getPaddingTop(self, self.layout.height) + getBorderTop(self)
+        crossStartOffset = getPaddingTop(self, self.layout.height, self.layout.width) + getBorderTop(self)
     else
-        mainStartOffset = getPaddingTop(self, self.layout.height) + getBorderTop(self)
+        mainStartOffset = getPaddingTop(self, self.layout.height, self.layout.width) + getBorderTop(self)
         crossStartOffset = getPaddingLeft(self, self.layout.width) + getBorderLeft(self)
     end
     
@@ -1672,6 +1692,12 @@ function LuaFlex.Node:layoutChildren()
             baseMain = child.flexBasis.value
         elseif child.flexBasis.type == LuaFlex.ValueType.Percent then
             baseMain = (child.flexBasis.value / 100) * availableMainSize
+        elseif child.flexBasis.type == LuaFlex.ValueType.Content then
+            -- "content" basis keyword always resolves to content size, ignoring width/height
+            local cw, ch = calculateIntrinsicSize(child,
+                isMainAxisRow and availableMainSize or availableCrossSize,
+                isMainAxisRow and availableCrossSize or availableMainSize)
+            baseMain = isMainAxisRow and cw or ch
         else -- flexBasis is auto or undefined
             -- Per spec, 'auto' basis resolves to the main size property if defined, otherwise content size.
             local mainSizeProperty = isMainAxisRow and child.width or child.height
@@ -1736,13 +1762,7 @@ function LuaFlex.Node:layoutChildren()
     for lineIndex, lineChildren in ipairs(flexLines) do
         local maxCrossSize = 0
         for _, child in ipairs(lineChildren) do
-            local originalIndex = nil
-            for j, originalChild in ipairs(children) do
-                if originalChild == child then
-                    originalIndex = j
-                    break
-                end
-            end
+            local originalIndex = sortedOriginalIndices[child] -- O(1) lookup
             
             if originalIndex then
                 local crossSize = childCrossSizes[originalIndex]
@@ -1809,7 +1829,7 @@ function LuaFlex.Node:layoutChildren()
         local actualChildMainSizes = layoutLine(self, lineChildren, 
                                                 availableMainSize, availableCrossSize,
                                                 childMainSizes, childCrossSizes, childMargins,
-                                                mainStartOffset, currentCrossPosition, lineCrossSize, originalIndices)
+                                                mainStartOffset, currentCrossPosition, lineCrossSize, sortedOriginalIndices)
         
         lineChildMainSizes[lineIndex] = actualChildMainSizes
         
