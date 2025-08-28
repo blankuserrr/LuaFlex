@@ -131,6 +131,10 @@ function LuaFlex.Node.new(props)
         paddingRight = createValue(),
         paddingBottom = createValue(),
         
+        -- Gap
+        rowGap = createValue(),
+        columnGap = createValue(),
+        
         -- Border
         borderLeft = createValue(),
         borderTop = createValue(),
@@ -224,7 +228,9 @@ function LuaFlex.Node.new(props)
             minWidth = "minWidth_parsed",
             minHeight = "minHeight_parsed",
             maxWidth = "maxWidth_parsed",
-            maxHeight = "maxHeight_parsed"
+            maxHeight = "maxHeight_parsed",
+            rowGap = "rowGap_parsed",
+            columnGap = "columnGap_parsed"
         }
         
         -- Apply direct and parsed properties
@@ -257,6 +263,12 @@ function LuaFlex.Node.new(props)
             node.paddingRight = paddingValue
             node.paddingBottom = paddingValue
             node.paddingLeft = paddingValue
+        end
+        
+        if props.gap then
+            local gapValue = parseDimension(props.gap)
+            node.rowGap = gapValue
+            node.columnGap = gapValue
         end
     end
     
@@ -441,6 +453,31 @@ function LuaFlex.Node:setPaddingLeft(padding, valueType)
     local newPadding = createValue(padding, valueType)
     if self.paddingLeft.value ~= newPadding.value or self.paddingLeft.type ~= newPadding.type then
         self.paddingLeft = newPadding
+        self:markDirty()
+    end
+    return self
+end
+
+-- Gap setters
+function LuaFlex.Node:setGap(gap, valueType)
+    self:setRowGap(gap, valueType)
+    self:setColumnGap(gap, valueType)
+    return self
+end
+
+function LuaFlex.Node:setRowGap(gap, valueType)
+    local newGap = createValue(gap, valueType)
+    if self.rowGap.value ~= newGap.value or self.rowGap.type ~= newGap.type then
+        self.rowGap = newGap
+        self:markDirty()
+    end
+    return self
+end
+
+function LuaFlex.Node:setColumnGap(gap, valueType)
+    local newGap = createValue(gap, valueType)
+    if self.columnGap.value ~= newGap.value or self.columnGap.type ~= newGap.type then
+        self.columnGap = newGap
         self:markDirty()
     end
     return self
@@ -1195,6 +1232,18 @@ local function positionFlexItemsMainAxis(container, lineChildren, resolvedMainSi
     local currentMainPosition = mainStartOffset
     local spacing = 0
     
+    -- Determine the gap for the main axis
+    local mainAxisGap = 0
+    if #lineChildren > 1 then
+        if container:isFlexDirectionRow() then
+            -- Use parent width for columnGap percentage resolution
+            mainAxisGap = resolveValue(container.columnGap, container.layout.width) 
+        else
+            -- Use parent height for rowGap percentage resolution
+            mainAxisGap = resolveValue(container.rowGap, container.layout.height)
+        end
+    end
+
     -- Calculate actual used space after flexible length resolution
     local totalUsedSpace = 0
     for i, _ in ipairs(lineChildren) do
@@ -1202,7 +1251,8 @@ local function positionFlexItemsMainAxis(container, lineChildren, resolvedMainSi
         totalUsedSpace = totalUsedSpace + resolvedMainSizes[i] + margin.mainStart + margin.mainEnd
     end
     
-    local remainingSpace = availableMainSize - totalUsedSpace
+    local totalGapSpace = mainAxisGap * (#lineChildren > 1 and #lineChildren - 1 or 0)
+    local remainingSpace = availableMainSize - totalUsedSpace - totalGapSpace
     
     -- Handle auto margins first (they consume remaining space)
     local autoMarginCount = 0
@@ -1249,7 +1299,14 @@ local function positionFlexItemsMainAxis(container, lineChildren, resolvedMainSi
         local margin = lineChildMargins[i]
         currentMainPosition = currentMainPosition + margin.mainStart
         setMainAxisPosition(child, currentMainPosition)
+        
+        -- Move current position forward
         currentMainPosition = currentMainPosition + resolvedMainSizes[i] + margin.mainEnd + spacing
+        
+        -- Add gap if not the last item
+        if i < #lineChildren then
+            currentMainPosition = currentMainPosition + mainAxisGap
+        end
     end
 end
 
@@ -1626,11 +1683,19 @@ function LuaFlex.Node:layoutChildren()
             baseMain = child.flexBasis.value
         elseif child.flexBasis.type == LuaFlex.ValueType.Percent then
             baseMain = (child.flexBasis.value / 100) * availableMainSize
-        else
-            local cw, ch = calculateIntrinsicSize(child,
-                isMainAxisRow and availableMainSize or availableCrossSize,
-                isMainAxisRow and availableCrossSize or availableMainSize)
-            baseMain = isMainAxisRow and cw or ch
+        else -- flexBasis is auto or undefined
+            -- Per spec, 'auto' basis resolves to the main size property if defined, otherwise content size.
+            local mainSizeProperty = isMainAxisRow and child.width or child.height
+            if mainSizeProperty.type == LuaFlex.ValueType.Point then
+                baseMain = mainSizeProperty.value
+            elseif mainSizeProperty.type == LuaFlex.ValueType.Percent then
+                baseMain = (mainSizeProperty.value / 100) * availableMainSize
+            else -- width/height is also auto or undefined, so use content size
+                local cw, ch = calculateIntrinsicSize(child,
+                    isMainAxisRow and availableMainSize or availableCrossSize,
+                    isMainAxisRow and availableCrossSize or availableMainSize)
+                baseMain = isMainAxisRow and cw or ch
+            end
         end
         baseMain = clampMainAxis(child, isMainAxisRow, baseMain, availableMainSize)
         local cw2, ch2 = calculateIntrinsicSize(child,
@@ -1707,6 +1772,19 @@ function LuaFlex.Node:layoutChildren()
         totalLineCrossSize = totalLineCrossSize + lineSize
     end
     
+    -- Determine the gap for the cross axis (between lines)
+    local crossAxisGap = 0
+    if #flexLines > 1 then
+        if isMainAxisRow then
+            crossAxisGap = resolveValue(self.rowGap, self.layout.height)
+        else
+            crossAxisGap = resolveValue(self.columnGap, self.layout.width)
+        end
+    end
+    
+    -- Account for gaps in total cross size
+    totalLineCrossSize = totalLineCrossSize + (crossAxisGap * (#flexLines > 1 and #flexLines - 1 or 0))
+
     local remainingCrossSpace = availableCrossSize - totalLineCrossSize
     local currentCrossPosition = crossStartOffset
     local lineSpacing = 0
@@ -1748,6 +1826,11 @@ function LuaFlex.Node:layoutChildren()
         
         -- Move to next line
         currentCrossPosition = currentCrossPosition + lineCrossSize + lineSpacing
+        
+        -- Add cross-axis gap if not the last line
+        if lineIndex < #flexLines then
+            currentCrossPosition = currentCrossPosition + crossAxisGap
+        end
     end
     
     -- Layout absolutely positioned children after normal flow
