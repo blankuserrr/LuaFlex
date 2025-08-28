@@ -83,6 +83,30 @@ local function createValue(value, valueType)
     }
 end
 
+-- Helper function to parse dimension values from various types
+local function parseDimension(val)
+    if val == nil then
+        return createValue(nil, LuaFlex.ValueType.Undefined)
+    end
+    local t = type(val)
+    if t == "number" then
+        return createValue(val, LuaFlex.ValueType.Point)
+    elseif t == "string" then
+        if val == "auto" then
+            return createValue(nil, LuaFlex.ValueType.Auto)
+        end
+        local pct = string.match(val, "^(%-?%d+%.?%d*)%%$")
+        if pct then
+            return createValue(tonumber(pct), LuaFlex.ValueType.Percent)
+        end
+        local num = tonumber(val)
+        if num then
+            return createValue(num, LuaFlex.ValueType.Point)
+        end
+    end
+    return createValue(nil, LuaFlex.ValueType.Undefined)
+end
+
 -- Node class representing a flex container/item
 LuaFlex.Node = {}
 LuaFlex.Node.__index = LuaFlex.Node
@@ -183,28 +207,6 @@ function LuaFlex.Node.new(props)
     
     if props and type(props) == "table" then
         -- Simple property initializer; does not call setters to avoid dirty propagation during construction
-        local function parseDimension(val)
-            if val == nil then
-                return createValue(nil, LuaFlex.ValueType.Undefined)
-            end
-            local t = type(val)
-            if t == "number" then
-                return createValue(val, LuaFlex.ValueType.Point)
-            elseif t == "string" then
-                if val == "auto" then
-                    return createValue(nil, LuaFlex.ValueType.Auto)
-                end
-                local pct = string.match(val, "^(%-?%d+%.?%d*)%%$")
-                if pct then
-                    return createValue(tonumber(pct), LuaFlex.ValueType.Percent)
-                end
-                local num = tonumber(val)
-                if num then
-                    return createValue(num, LuaFlex.ValueType.Point)
-                end
-            end
-            return createValue(nil, LuaFlex.ValueType.Undefined)
-        end
         
         -- Data-driven property initialization
         local propertyMap = {
@@ -370,15 +372,14 @@ end
 
 -- Margin setters
 function LuaFlex.Node:setMargin(top, right, bottom, left)
-    self:setMarginTop(top, LuaFlex.ValueType.Point)
-    self:setMarginRight(right or top, LuaFlex.ValueType.Point)
-    self:setMarginBottom(bottom or top, LuaFlex.ValueType.Point)
-    self:setMarginLeft(left or right or top, LuaFlex.ValueType.Point)
+    self:setMarginTop(parseDimension(top))
+    self:setMarginRight(parseDimension(right or top))
+    self:setMarginBottom(parseDimension(bottom or top))
+    self:setMarginLeft(parseDimension(left or right or top))
     return self
 end
 
-function LuaFlex.Node:setMarginTop(margin, valueType)
-    local newMargin = createValue(margin, valueType)
+function LuaFlex.Node:setMarginTop(newMargin)
     if self.marginTop.value ~= newMargin.value or self.marginTop.type ~= newMargin.type then
         self.marginTop = newMargin
         self:markDirty()
@@ -386,8 +387,7 @@ function LuaFlex.Node:setMarginTop(margin, valueType)
     return self
 end
 
-function LuaFlex.Node:setMarginRight(margin, valueType)
-    local newMargin = createValue(margin, valueType)
+function LuaFlex.Node:setMarginRight(newMargin)
     if self.marginRight.value ~= newMargin.value or self.marginRight.type ~= newMargin.type then
         self.marginRight = newMargin
         self:markDirty()
@@ -395,8 +395,7 @@ function LuaFlex.Node:setMarginRight(margin, valueType)
     return self
 end
 
-function LuaFlex.Node:setMarginBottom(margin, valueType)
-    local newMargin = createValue(margin, valueType)
+function LuaFlex.Node:setMarginBottom(newMargin)
     if self.marginBottom.value ~= newMargin.value or self.marginBottom.type ~= newMargin.type then
         self.marginBottom = newMargin
         self:markDirty()
@@ -404,8 +403,7 @@ function LuaFlex.Node:setMarginBottom(margin, valueType)
     return self
 end
 
-function LuaFlex.Node:setMarginLeft(margin, valueType)
-    local newMargin = createValue(margin, valueType)
+function LuaFlex.Node:setMarginLeft(newMargin)
     if self.marginLeft.value ~= newMargin.value or self.marginLeft.type ~= newMargin.type then
         self.marginLeft = newMargin
         self:markDirty()
@@ -415,15 +413,14 @@ end
 
 -- Padding setters
 function LuaFlex.Node:setPadding(top, right, bottom, left)
-    self:setPaddingTop(top, LuaFlex.ValueType.Point)
-    self:setPaddingRight(right or top, LuaFlex.ValueType.Point)
-    self:setPaddingBottom(bottom or top, LuaFlex.ValueType.Point)
-    self:setPaddingLeft(left or right or top, LuaFlex.ValueType.Point)
+    self:setPaddingTop(parseDimension(top))
+    self:setPaddingRight(parseDimension(right or top))
+    self:setPaddingBottom(parseDimension(bottom or top))
+    self:setPaddingLeft(parseDimension(left or right or top))
     return self
 end
 
-function LuaFlex.Node:setPaddingTop(padding, valueType)
-    local newPadding = createValue(padding, valueType)
+function LuaFlex.Node:setPaddingTop(newPadding)
     if self.paddingTop.value ~= newPadding.value or self.paddingTop.type ~= newPadding.type then
         self.paddingTop = newPadding
         self:markDirty()
@@ -431,8 +428,7 @@ function LuaFlex.Node:setPaddingTop(padding, valueType)
     return self
 end
 
-function LuaFlex.Node:setPaddingRight(padding, valueType)
-    local newPadding = createValue(padding, valueType)
+function LuaFlex.Node:setPaddingRight(newPadding)
     if self.paddingRight.value ~= newPadding.value or self.paddingRight.type ~= newPadding.type then
         self.paddingRight = newPadding
         self:markDirty()
@@ -440,8 +436,7 @@ function LuaFlex.Node:setPaddingRight(padding, valueType)
     return self
 end
 
-function LuaFlex.Node:setPaddingBottom(padding, valueType)
-    local newPadding = createValue(padding, valueType)
+function LuaFlex.Node:setPaddingBottom(newPadding)
     if self.paddingBottom.value ~= newPadding.value or self.paddingBottom.type ~= newPadding.type then
         self.paddingBottom = newPadding
         self:markDirty()
@@ -449,8 +444,7 @@ function LuaFlex.Node:setPaddingBottom(padding, valueType)
     return self
 end
 
-function LuaFlex.Node:setPaddingLeft(padding, valueType)
-    local newPadding = createValue(padding, valueType)
+function LuaFlex.Node:setPaddingLeft(newPadding)
     if self.paddingLeft.value ~= newPadding.value or self.paddingLeft.type ~= newPadding.type then
         self.paddingLeft = newPadding
         self:markDirty()
@@ -459,14 +453,14 @@ function LuaFlex.Node:setPaddingLeft(padding, valueType)
 end
 
 -- Gap setters
-function LuaFlex.Node:setGap(gap, valueType)
-    self:setRowGap(gap, valueType)
-    self:setColumnGap(gap, valueType)
+function LuaFlex.Node:setGap(gap)
+    local gapValue = parseDimension(gap)
+    self:setRowGap(gapValue)
+    self:setColumnGap(gapValue)
     return self
 end
 
-function LuaFlex.Node:setRowGap(gap, valueType)
-    local newGap = createValue(gap, valueType)
+function LuaFlex.Node:setRowGap(newGap)
     if self.rowGap.value ~= newGap.value or self.rowGap.type ~= newGap.type then
         self.rowGap = newGap
         self:markDirty()
@@ -474,8 +468,7 @@ function LuaFlex.Node:setRowGap(gap, valueType)
     return self
 end
 
-function LuaFlex.Node:setColumnGap(gap, valueType)
-    local newGap = createValue(gap, valueType)
+function LuaFlex.Node:setColumnGap(newGap)
     if self.columnGap.value ~= newGap.value or self.columnGap.type ~= newGap.type then
         self.columnGap = newGap
         self:markDirty()
@@ -486,22 +479,21 @@ end
 -- Position setters
 function LuaFlex.Node:setPosition(top, right, bottom, left)
     if top then 
-        self:setTop(top, LuaFlex.ValueType.Point) 
+        self:setTop(parseDimension(top)) 
     end
     if right then 
-        self:setRight(right, LuaFlex.ValueType.Point) 
+        self:setRight(parseDimension(right)) 
     end
     if bottom then 
-        self:setBottom(bottom, LuaFlex.ValueType.Point) 
+        self:setBottom(parseDimension(bottom)) 
     end
     if left then 
-        self:setLeft(left, LuaFlex.ValueType.Point) 
+        self:setLeft(parseDimension(left)) 
     end
     return self
 end
 
-function LuaFlex.Node:setTop(top, valueType)
-    local newTop = createValue(top, valueType)
+function LuaFlex.Node:setTop(newTop)
     if self.top.value ~= newTop.value or self.top.type ~= newTop.type then
         self.top = newTop
         self:markDirty()
@@ -509,8 +501,7 @@ function LuaFlex.Node:setTop(top, valueType)
     return self
 end
 
-function LuaFlex.Node:setRight(right, valueType)
-    local newRight = createValue(right, valueType)
+function LuaFlex.Node:setRight(newRight)
     if self.right.value ~= newRight.value or self.right.type ~= newRight.type then
         self.right = newRight
         self:markDirty()
@@ -518,8 +509,7 @@ function LuaFlex.Node:setRight(right, valueType)
     return self
 end
 
-function LuaFlex.Node:setBottom(bottom, valueType)
-    local newBottom = createValue(bottom, valueType)
+function LuaFlex.Node:setBottom(newBottom)
     if self.bottom.value ~= newBottom.value or self.bottom.type ~= newBottom.type then
         self.bottom = newBottom
         self:markDirty()
@@ -527,8 +517,7 @@ function LuaFlex.Node:setBottom(bottom, valueType)
     return self
 end
 
-function LuaFlex.Node:setLeft(left, valueType)
-    local newLeft = createValue(left, valueType)
+function LuaFlex.Node:setLeft(newLeft)
     if self.left.value ~= newLeft.value or self.left.type ~= newLeft.type then
         self.left = newLeft
         self:markDirty()
