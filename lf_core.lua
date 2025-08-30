@@ -1109,15 +1109,20 @@ local function partitionChildrenIntoLines(children, childMainSizes, childMargins
         local margin = childMargins[i]
         local totalChildSize = childSize + margin.mainStart + margin.mainEnd
         
-        -- Check if adding this child would exceed available space
-        if #currentLine > 0 and (currentLineMainSize + totalChildSize) > availableMainSize then
-            -- Start a new line
+        -- If an item is larger than the container, it becomes a line of its own.
+        if totalChildSize > availableMainSize and #currentLine > 0 then
+            -- Finish the current line first.
             table.insert(lines, currentLine)
-            currentLine = {}
-            table.insert(currentLine, child)
+            -- Start a new line with the current item.
+            currentLine = { child }
             currentLineMainSize = totalChildSize
+        -- If the item doesn't fit on the current non-empty line, start a new line.
+        elseif #currentLine > 0 and (currentLineMainSize + totalChildSize) > availableMainSize then
+            table.insert(lines, currentLine)
+            currentLine = { child }
+            currentLineMainSize = totalChildSize
+        -- Otherwise, add the item to the current line.
         else
-            -- Add to current line
             table.insert(currentLine, child)
             currentLineMainSize = currentLineMainSize + totalChildSize
         end

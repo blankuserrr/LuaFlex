@@ -320,12 +320,16 @@ node:getBaseline()  -- Get text baseline position
 
 LuaFlex uses efficient algorithms and memory management:
 - **Correct CSS Flexbox implementation** - Follows the W3C specification algorithm precisely
-- Dirty flag system to avoid unnecessary recalculations
+- **Optimized Subtree Recalculation (Dirty Checking)**: LuaFlex intelligently recomputes only the parts of the layout tree that have changed, avoiding unnecessary full recalculations.
 - **Multi-pass layout** with intelligent caching for auto dimensions
 - Proper flexible length resolution with min/max constraint handling
 - Optimized flex distribution calculations
 - Content measurement caching to avoid redundant calculations
 - Integrated baseline alignment without post-processing
+
+### Optimized Subtree Recalculation (Dirty Checking)
+
+LuaFlex tracks changes at the node level using dirty flags. All public setters (for example, `:setWidth`, `:setPadding`, `:setFlexGrow`, `:setPositionType`) mark the node and its ancestors as dirty so the engine knows which subtrees need recomputation. When `:calculateLayout` runs, only dirty subtrees are recomputed, dramatically reducing work for incremental updates. To benefit from this optimization, always use the provided setter methods rather than mutating node fields directly.
 
 ### Algorithm Correctness
 LuaFlex now implements the correct CSS Flexbox algorithm:
