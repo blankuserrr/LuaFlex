@@ -16,8 +16,8 @@ local LuaFlex = require("lf_core")
 
 -- Create a container
 local container = LuaFlex.Node.new()
-    :setWidth(300, LuaFlex.ValueType.Point)
-    :setHeight(200, LuaFlex.ValueType.Point)
+    :setWidth(300)
+    :setHeight(200)
     :setFlexDirection(LuaFlex.FlexDirection.Row)
     :setJustifyContent(LuaFlex.JustifyContent.SpaceBetween)
     :setAlignItems(LuaFlex.AlignItems.Center)
@@ -25,14 +25,14 @@ local container = LuaFlex.Node.new()
 
 -- Create children
 local child1 = LuaFlex.Node.new()
-    :setWidth(50, LuaFlex.ValueType.Point)
-    :setHeight(100, LuaFlex.ValueType.Point)
+    :setWidth(50)
+    :setHeight(100)
     :setFlexGrow(1)
     :setMargin(5)  -- 5px margin
 
 local child2 = LuaFlex.Node.new()
-    :setWidth(50, LuaFlex.ValueType.Point)
-    :setHeight(80, LuaFlex.ValueType.Point)
+    :setWidth(50)
+    :setHeight(80)
     :setFlexGrow(2)
 
 -- Build the tree
@@ -49,8 +49,8 @@ print("Child 1:", child1:getComputedLeft(), child1:getComputedTop(),
 
 -- Multi-line example with flex-wrap
 local wrapContainer = LuaFlex.Node.new()
-    :setWidth(200, LuaFlex.ValueType.Point)
-    :setHeight(150, LuaFlex.ValueType.Point)
+    :setWidth(200)
+    :setHeight(150)
     :setFlexDirection(LuaFlex.FlexDirection.Row)
     :setFlexWrap(LuaFlex.FlexWrap.Wrap)
     :setAlignContent(LuaFlex.AlignContent.SpaceBetween)
@@ -58,8 +58,8 @@ local wrapContainer = LuaFlex.Node.new()
 -- Add items that will wrap to multiple lines
 for i = 1, 6 do
     local item = LuaFlex.Node.new()
-        :setWidth(80, LuaFlex.ValueType.Point)
-        :setHeight(30, LuaFlex.ValueType.Point)
+        :setWidth(80)
+        :setHeight(30)
     wrapContainer:appendChild(item)
 end
 
@@ -67,22 +67,22 @@ wrapContainer:calculateLayout(200, 150)
 
 -- Absolute positioning example
 local container = LuaFlex.Node.new()
-    :setWidth(300, LuaFlex.ValueType.Point)
-    :setHeight(200, LuaFlex.ValueType.Point)
+    :setWidth(300)
+    :setHeight(200)
     :setPadding(20)
 
 -- Normal flow child
 local normalChild = LuaFlex.Node.new()
-    :setWidth(100, LuaFlex.ValueType.Point)
-    :setHeight(60, LuaFlex.ValueType.Point)
+    :setWidth(100)
+    :setHeight(60)
 
 -- Absolutely positioned child
 local absoluteChild = LuaFlex.Node.new()
     :setPositionType(LuaFlex.PositionType.Absolute)
-    :setTop(10, LuaFlex.ValueType.Point)
-    :setRight(10, LuaFlex.ValueType.Point)
-    :setWidth(50, LuaFlex.ValueType.Point)
-    :setHeight(30, LuaFlex.ValueType.Point)
+    :setTop(10)
+    :setRight(10)
+    :setWidth(50)
+    :setHeight(30)
 
 container:appendChild(normalChild)
 container:appendChild(absoluteChild)
@@ -90,15 +90,15 @@ container:calculateLayout(300, 200)
 
 -- Auto dimensions example with custom measure functions
 local autoContainer = LuaFlex.Node.new()
-    :setWidth(nil, LuaFlex.ValueType.Auto)  -- Size based on content
-    :setHeight(nil, LuaFlex.ValueType.Auto)
+    :setWidth("auto")  -- Size based on content
+    :setHeight("auto")
     :setFlexDirection(LuaFlex.FlexDirection.Column)
     :setPadding(10)
 
 -- Text node with custom measure function
 local textNode = LuaFlex.Node.new()
-    :setWidth(nil, LuaFlex.ValueType.Auto)
-    :setHeight(nil, LuaFlex.ValueType.Auto)
+    :setWidth("auto")
+    :setHeight("auto")
     :setMeasureFunc(function(node, availableWidth, availableHeight)
         -- Simulate text measurement
         return 120, 16  -- 120px wide, 16px tall
@@ -110,8 +110,8 @@ autoContainer:calculateLayout(400, 300)
 
 -- Baseline alignment example for text
 local textContainer = LuaFlex.Node.new()
-    :setWidth(300, LuaFlex.ValueType.Point)
-    :setHeight(60, LuaFlex.ValueType.Point)
+    :setWidth(300)
+    :setHeight(60)
     :setFlexDirection(LuaFlex.FlexDirection.Row)
     :setAlignItems(LuaFlex.AlignItems.Baseline)  -- Align text baselines
 
@@ -130,8 +130,8 @@ textContainer:calculateLayout(300, 60)
 
 -- Visual reordering with order property
 local container = LuaFlex.Node.new()
-    :setWidth(200, LuaFlex.ValueType.Point)
-    :setHeight(100, LuaFlex.ValueType.Point)
+    :setWidth(200)
+    :setHeight(100)
     :setFlexDirection(LuaFlex.FlexDirection.Row)
 
 -- Create items in source order: A, B, C
@@ -149,27 +149,27 @@ container:calculateLayout(200, 100)
 
 -- Relative positioning example
 local container = LuaFlex.Node.new()
-    :setWidth(300, LuaFlex.ValueType.Point)
-    :setHeight(200, LuaFlex.ValueType.Point)
+    :setWidth(300)
+    :setHeight(200)
     :setFlexDirection(LuaFlex.FlexDirection.Row)
 
 -- Normal flex item
 local item1 = LuaFlex.Node.new()
-    :setWidth(100, LuaFlex.ValueType.Point)
-    :setHeight(50, LuaFlex.ValueType.Point)
+    :setWidth(100)
+    :setHeight(50)
 
 -- Relatively positioned item - offset from its normal position
 local item2 = LuaFlex.Node.new()
-    :setWidth(100, LuaFlex.ValueType.Point)
-    :setHeight(50, LuaFlex.ValueType.Point)
+    :setWidth(100)
+    :setHeight(50)
     :setPositionType(LuaFlex.PositionType.Relative)
-    :setTop(10, LuaFlex.ValueType.Point)    -- Move 10px down from normal position
-    :setLeft(20, LuaFlex.ValueType.Point)   -- Move 20px right from normal position
+    :setTop(10)    -- Move 10px down from normal position
+    :setLeft(20)   -- Move 20px right from normal position
 
 -- Another normal item
 local item3 = LuaFlex.Node.new()
-    :setWidth(100, LuaFlex.ValueType.Point)
-    :setHeight(50, LuaFlex.ValueType.Point)
+    :setWidth(100)
+    :setHeight(50)
 
 container:appendChild(item1)
 container:appendChild(item2)
@@ -242,16 +242,19 @@ node:setFlexWrap(wrap)
 node:setOrder(order)  -- Controls visual order of items
 node:setFlexGrow(grow)
 node:setFlexShrink(shrink)
-node:setFlexBasis(basis, valueType)
+node:setFlexBasis(basis)
 node:setPositionType(positionType)
 ```
 
 #### Dimensions
 ```lua
-node:setWidth(width, valueType)
-node:setHeight(height, valueType)
--- For auto dimensions, use LuaFlex.ValueType.Auto
-node:setWidth(nil, LuaFlex.ValueType.Auto)  -- Size based on content
+node:setWidth(width)
+node:setHeight(height)
+node:setMinWidth(width)
+node:setMinHeight(height)
+node:setMaxWidth(width)
+node:setMaxHeight(height)
+-- width/height can be a number (e.g. 100) or a string ("100", "50%", "auto")
 ```
 
 #### Content Measurement
@@ -274,6 +277,7 @@ end)
 node:setMargin(top, right, bottom, left)
 node:setPadding(top, right, bottom, left)
 node:setPosition(top, right, bottom, left)
+-- All box model values can be a number or a string ("10", "10%")
 ```
 
 #### Tree Manipulation
@@ -294,6 +298,16 @@ node:getComputedHeight()
 node:getBaseline()  -- Get text baseline position
 ```
 
+#### Batched Updates
+For performance, you can batch multiple style changes to trigger a single layout recalculation.
+```lua
+node:batch(function(n)
+    n:setWidth(100)
+    n:setHeight(200)
+    n:setMargin(5)
+end)
+-- markDirty() is only called once after the function completes.
+```
 
 
 ## Current Status
